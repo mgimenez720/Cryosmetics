@@ -1,12 +1,10 @@
 # Analysis of skin microbiome data from a uruguayan women cohort  
 
-### Description
+### Description of the analysis
 
 
 
 ![Pipeline overview](./img/Figura_paper_skin.png)
-
-### Installation
 
     
 
@@ -30,12 +28,15 @@ vegan
     Matías Giménez
     Cecilia Salazar
     Nadia Riera
+    Vanessa Piattoni
 
 
     Microbial Genomics Laboratory
     Institut Pasteur Montevideo (Uruguay)
 
+    Cryosmetics 
 
+    
 ### Note
 
 This is a beta version, please report bugs or misfunctions detected.
