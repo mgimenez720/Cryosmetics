@@ -7,16 +7,17 @@ library(microbiome)
 library(vegan)
 library(readxl)
 library(paletteer)
+library(rstatix)
+library(ggpubr)
 
 
 setwd("/mnt/4tb/home/mgimenez/Matias/Cryosmetics")
 
-#Repito el análisis con no meta_March26
 ps_all <- readRDS("Phyloseq_nometa_EMU_all.RDS")
 
 #ps_all <- readRDS("Phyloseq_nometa_EMU_all_March26.RDS")
 
-#Filtrat pacientes sin T0 o T1
+# Keep patients with both T0 and T1
 meta <- as(sample_data(ps_all), "data.frame")
 
 patients_keep <- meta %>%
@@ -32,7 +33,7 @@ ps_all <- ps_paired
 
 
 
-#Add metadata to the phyloseq object
+# Add metadata
 
 dataset <- read_excel("Tabla_metadatos_Cryos.xlsx")
 
@@ -65,12 +66,45 @@ sd_new$Age[which(sd_new$Patient=="CRYO_034")] <- 32
 sample_data(ps_all) <- sample_data(sd_new)
 
 
+# ==============================
+# 0. Batch correction (MMUPHin, Time as covariate)
+# ==============================
+
+library(MMUPHin)
+
+correct_batch <- TRUE
+
+if (correct_batch) {
+
+  meta_batch <- data.frame(sample_data(ps_all))
+  meta_batch$Batch <- factor(meta_batch$Batch)
+  meta_batch$Time <- factor(meta_batch$Time)
+
+  counts <- as(otu_table(ps_all), "matrix")
+  if (!taxa_are_rows(ps_all)) counts <- t(counts)
+
+  fit_batch <- adjust_batch(
+    feature_abd = counts,
+    batch = "Batch",
+    covariates = "Time",
+    data = meta_batch,
+    control = list(verbose = FALSE)
+  )
+
+  otu_table(ps_all) <- otu_table(
+    round(fit_batch$feature_abd_adj),
+    taxa_are_rows = TRUE
+  )
+  ps_all <- prune_taxa(taxa_sums(ps_all) > 0, ps_all)
+}
+
+
 library(phyloseq)
 library(tidyverse)
 library(paletteer)
 
 # ==============================
-# 1. Crear grupos etáreos
+# 1. Age groups
 # ==============================
 
 meta <- as(sample_data(ps_all), "data.frame")
@@ -79,19 +113,19 @@ meta <- meta %>%
   mutate(
     Age = as.numeric(Age),
     Age_group = case_when(
-      Age <= 30 ~ "Young",
-      Age >= 31 & Age <= 40 ~ "Middle",
-      Age >= 41 ~ "Grown",
+      Age <= 30 ~ "<= 30 years",
+      Age >= 31 & Age <= 40 ~ "31-40 years",
+      Age >= 41 ~ ">= 41 years",
       TRUE ~ NA_character_
     ),
-    Age_group = factor(Age_group, levels = c("Young", "Middle", "Grown"))
+    Age_group = factor(Age_group, levels = c("<= 30 years", "31-40 years", ">= 41 years"))
   )
 
 rownames(meta) <- sample_names(ps_all)
 sample_data(ps_all) <- sample_data(meta)
 
 # ==============================
-# 2. Filtrar T0 y transformar a relativa
+# 2. T0 samples, relative abundance
 # ==============================
 
 ps_t0 <- prune_samples(
@@ -103,7 +137,7 @@ ps_t0 <- prune_samples(
 ps_rel <- transform_sample_counts(ps_t0, function(x) x / sum(x))
 
 # ==============================
-# 3. Formato largo usando taxa_names como especie
+# 3. Long format
 # ==============================
 
 df_species <- psmelt(ps_rel) %>%
@@ -112,7 +146,7 @@ df_species <- psmelt(ps_rel) %>%
   )
 
 # ==============================
-# 4. Top 15 especies según abundancia media
+# 4. Top species by mean abundance
 # ==============================
 
 top15_species <- df_species %>%
@@ -126,7 +160,7 @@ top15_species <- df_species %>%
   pull(Species_plot_name)
 
 # ==============================
-# 5. Agrupar el resto como Others
+# 5. Remaining taxa as Others
 # ==============================
 
 df_barplot <- df_species %>%
@@ -148,8 +182,7 @@ df_barplot <- df_species %>%
   )
 
 # ==============================
-# 6. Core microbiome en T0
-# Esta sección debe ir ANTES de definir colores
+# 6. Core microbiome (T0)
 # ==============================
 
 ps_rel_t0 <- transform_sample_counts(
@@ -187,7 +220,7 @@ core_abund_df <- core_abund_df %>%
 
 
 # ==============================
-# 7. Colores comunes para especies
+# 7. Species colors
 # ==============================
 
 all_species <- unique(c(top15_species, taxa_order))
@@ -207,7 +240,7 @@ species_cols_barplot <- c(
 
 
 # ==============================
-# 7. Barplot
+# 8. Fig 1A: barplot
 # ==============================
 
 Fig_1a <- ggplot(
@@ -244,12 +277,7 @@ Fig_1a
 
 
 # ==============================
-# Alfa diversidad por grupo etáreo en T0
-# Reutiliza ps_t0 con Age_group ya creado
-# ==============================
-
-# ==============================
-# Shannon por grupo etáreo en T0
+# 9. Fig 1B: Shannon by age group
 # ==============================
 
 alpha_shannon <- estimate_richness(
@@ -270,7 +298,7 @@ alpha_shannon <- alpha_shannon %>%
   mutate(
     Age_group = factor(
       Age_group,
-      levels = c("Young", "Middle", "Grown")
+      levels = c("<= 30 years", "31-40 years", ">= 41 years")
     )
   )
 
@@ -279,7 +307,8 @@ p_shannon <- alpha_shannon %>%
     Shannon ~ Age_group,
     p.adjust.method = "BH"
   ) %>%
-  add_xy_position(x = "Age_group")
+  slice(c(1, 3, 2)) %>%  # longest bracket on top
+  add_xy_position(x = "Age_group", step.increase = 0.25)
 
 Fig_1B <- ggplot(
   alpha_shannon,
@@ -309,9 +338,9 @@ Fig_1B <- ggplot(
   ) +
   
   scale_fill_manual(values = c(
-    "Young" = "#FED789FF",
-    "Middle" = "#023743FF",
-    "Grown" = "#453947FF"
+    "<= 30 years" = "#FED789FF",
+    "31-40 years" = "#023743FF",
+    ">= 41 years" = "#453947FF"
   )) +
   
   theme_minimal(base_size = 12) +
@@ -342,16 +371,14 @@ library(tidyverse)
 library(paletteer)
 
 # ==============================
-# CLR transform + Aitchison
+# 10. CLR + Aitchison distance
 # ==============================
 
-ps_rel <- transform_sample_counts(
-  ps_t0,
-  function(x) x / sum(x)
-)
+prev_t0 <- apply(otu_table(ps_t0), 1, function(x) mean(x > 0))
+ps_t0_prev <- prune_taxa(prev_t0 >= 0.10, ps_t0)
 
 ps_clr <- transform_sample_counts(
-  ps_rel,
+  ps_t0_prev,
   function(x) log(x + 1) - mean(log(x + 1))
 )
 
@@ -361,9 +388,10 @@ aitchison_dist <- phyloseq::distance(
 )
 
 # ==============================
-# NMDS
+# 11. NMDS
 # ==============================
 
+set.seed(123)
 ordu <- ordinate(
   ps_clr,
   method = "NMDS",
@@ -383,9 +411,10 @@ ord_df <- left_join(
 )
 
 # ==============================
-# PERMANOVA
+# 12. PERMANOVA
 # ==============================
 
+set.seed(123)
 perm_age <- adonis2(
   aitchison_dist ~ Age_group,
   data = meta_t0,
@@ -398,7 +427,7 @@ p_perm <- signif(perm_age$`Pr(>F)`[1], 3)
 r2_perm <- signif(perm_age$R2[1], 3)
 
 # ==============================
-# NMDS plot
+# 13. Fig 1C: NMDS plot
 # ==============================
 
 Fig_1c <- ggplot(
@@ -423,15 +452,15 @@ Fig_1c <- ggplot(
   ) +
   
   scale_fill_manual(values = c(
-    "Young" = "#FED789FF",
-    "Middle" = "#023743FF",
-    "Grown" = "#453947FF"
+    "<= 30 years" = "#FED789FF",
+    "31-40 years" = "#023743FF",
+    ">= 41 years" = "#453947FF"
   )) +
   
   scale_color_manual(values = c(
-    "Young" = "#FED789FF",
-    "Middle" = "#023743FF",
-    "Grown" = "#453947FF"
+    "<= 30 years" = "#FED789FF",
+    "31-40 years" = "#023743FF",
+    ">= 41 years" = "#453947FF"
   )) +
   
   annotate(
@@ -472,9 +501,7 @@ library(tidyverse)
 library(ggbeeswarm)
 
 # ==============================
-# Core microbiome en T0
-# prevalence = 99%
-# detection = 0
+# 14. Fig 1D: core taxa (prevalence 99%)
 # ==============================
 
 ps_rel_t0 <- transform_sample_counts(
@@ -493,20 +520,11 @@ core_taxa <- taxa_names(core_ps_t0)
 core_taxa
 length(core_taxa)
 
-# ==============================
-# Abundancia relativa de taxa core
-# El nombre de especie está en taxa_names()
-# ==============================
-
 core_abund_df <- psmelt(core_ps_t0) %>%
   mutate(
     Species = as.character(OTU),
     Species = factor(Species, levels = core_taxa)
   )
-
-# ==============================
-# Ordenar taxa por abundancia media
-# ==============================
 
 taxa_order <- core_abund_df %>%
   group_by(Species) %>%
@@ -524,10 +542,6 @@ core_abund_df <- core_abund_df %>%
       levels = rev(taxa_order)
     )
   )
-
-# ==============================
-# Plot ordenado
-# ==============================
 
 Fig_1d<- ggplot(
   core_abund_df,
@@ -576,9 +590,7 @@ Fig_1d
 library(patchwork)
 
 # ==============================
-# Layout figura final
-# 1A arriba
-# abajo las otras 3 en una fila
+# 15. Final layout
 # ==============================
 
 
@@ -596,3 +608,16 @@ Final_Figure <- top_row /
 
 Final_Figure
 
+
+ggsave(
+  file.path(
+    "/mnt/4tb/home/mgimenez/Matias/Cryosmetics/Cryosmetics",
+    "Figure_1.png"
+  ),
+  Final_Figure,
+  width = 15,
+  height = 10,
+  dpi = 300,
+  bg = "white",
+  device = ragg::agg_png
+)

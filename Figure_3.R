@@ -24,6 +24,44 @@ ps_all <- readRDS("EMU_meta_physeq.RDS")
 
 
 # ==============================
+# Corrección de efecto batch (MMUPHin)
+# Las muestras se secuenciaron en dos corridas (variable Batch).
+# MMUPHin::adjust_batch ajusta un modelo tipo ComBat de ceros inflados
+# sobre abundancias, preservando el efecto de Time (covariable).
+# Cada paciente tiene T0 y T1 en la misma corrida.
+# correct_batch <- FALSE reproduce el análisis sin corregir.
+# ==============================
+
+library(MMUPHin)
+
+correct_batch <- TRUE
+
+if (correct_batch) {
+
+  meta_batch <- data.frame(sample_data(ps_all))
+  meta_batch$Batch <- factor(meta_batch$Batch)
+  meta_batch$Time <- factor(meta_batch$Time)
+
+  counts <- as(otu_table(ps_all), "matrix")
+  if (!taxa_are_rows(ps_all)) counts <- t(counts)
+
+  fit_batch <- adjust_batch(
+    feature_abd = counts,
+    batch = "Batch",
+    covariates = "Time",
+    data = meta_batch,
+    control = list(verbose = FALSE)
+  )
+
+  otu_table(ps_all) <- otu_table(
+    round(fit_batch$feature_abd_adj),
+    taxa_are_rows = TRUE
+  )
+  ps_all <- prune_taxa(taxa_sums(ps_all) > 0, ps_all)
+}
+
+
+# ==============================
 # 2. Filtrar T0 y transformar a relativa
 # ==============================
 
@@ -570,7 +608,7 @@ wilcox_res_degree
        color = category_baseline
      ),
      alpha = 0.9,
-     size=2
+     size=3
    ) +
    scale_color_manual(values = category_colors) +
    edge_scale_common +
@@ -598,7 +636,7 @@ wilcox_res_degree
        color = category_baseline
      ),
      alpha = 0.9,
-     size=2
+     size=3
    ) +
    scale_color_manual(values = category_colors) +
    edge_scale_common +
@@ -633,7 +671,8 @@ wilcox_res_degree
        #  size = neg_degree,
        color = category_baseline
      ),
-     alpha = 0.9
+     alpha = 0.9,
+     size = 2.5
    ) +
    scale_color_manual(values = category_colors) +
    edge_scale_common +
@@ -662,7 +701,8 @@ wilcox_res_degree
        # size = neg_degree,
        color = category_baseline
      ),
-     alpha = 0.9
+     alpha = 0.9,
+     size = 2.5
    ) +
    scale_color_manual(values = category_colors) +
    edge_scale_common +
@@ -848,4 +888,17 @@ wilcox_res_degree
     )
   
   final_fig
+
+  ggsave(
+    file.path(
+      "/mnt/4tb/home/mgimenez/Matias/Cryosmetics/Cryosmetics",
+      "Figure_3.png"
+    ),
+    final_fig,
+    width = 12,
+    height = 15,
+    dpi = 300,
+    bg = "white",
+    device = ragg::agg_png
+  )
   
