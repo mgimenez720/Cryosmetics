@@ -884,7 +884,9 @@ wilcox_res_degree
       )
     ) &
     theme(
-      legend.position = "right"
+      legend.position = "right",
+      legend.text  = element_text(size = 9.8),  # default 8.8 + 1 pt
+      legend.title = element_text(size = 12)    # default 11 + 1 pt
     )
   
   final_fig
